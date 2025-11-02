@@ -4,6 +4,7 @@ import os
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, ".."))
 sys.path.append(project_root)
+import torch
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -48,6 +49,21 @@ def main(cfg_path: str):
 
     model = patchvolumeAE(cfg)
 
+    # Load checkpoint if exists
+    if cfg.model.resume_from_checkpoint and os.path.exists(cfg.model.resume_from_checkpoint):
+        print(f'Loading checkpoint from {cfg.model.resume_from_checkpoint}')
+        checkpoint = torch.load(cfg.model.resume_from_checkpoint, map_location='cpu')
+        
+        # Load model weights
+        if 'model' in checkpoint:
+            model.load_state_dict(checkpoint['model'], strict=False)
+            print(f"Loaded model weights from epoch {checkpoint.get('epoch', 'unknown')}")
+        else:
+            model.load_state_dict(checkpoint, strict=False)
+        
+        del checkpoint
+        torch.cuda.empty_cache()
+
     callbacks = []
     callbacks.append(ModelCheckpoint(monitor='val/recon_loss',
                      save_top_k=3, mode='min', filename='latest_checkpoint'))
@@ -75,11 +91,7 @@ def main(cfg_path: str):
         logger=logger
     )
 
-    if cfg.model.resume_from_checkpoint and os.path.exists(cfg.model.resume_from_checkpoint):
-        print('will start from the recent ckpt %s' % cfg.model.resume_from_checkpoint)
-        trainer.fit(model, train_dataloader, val_dataloader,ckpt_path=cfg.model.resume_from_checkpoint)
-    else:
-        trainer.fit(model, train_dataloader, val_dataloader)
+    trainer.fit(model, train_dataloader, val_dataloader)
 
 
 if __name__ == '__main__':
