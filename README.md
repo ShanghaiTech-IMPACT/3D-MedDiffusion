@@ -23,7 +23,7 @@ Experimental results demonstrate that 3D MedDiffusion surpasses state-of-the-art
 - ~~📦 Training code for single-resolution release~~  
 - ~~🧠 Pre-trained weights (8x downsampling) release~~  
 - ~~🌐 Inference code release~~  
-- 📄 Pre-trained weights (4x downsampling) release  
+- ~~📄 Pre-trained weights (4x downsampling) release~~
 - 📝 Training code for multi-resolution release  
 
 
