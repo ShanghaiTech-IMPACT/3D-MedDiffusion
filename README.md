@@ -83,9 +83,15 @@ torchrun --nnodes=1 --nproc_per_node=8 --master_port 29513 train/train_BiFlowNet
 ```
 
 ## Inference
+Generation using 8x downsampling
 ```
 python evaluation/class_conditional_generation.py --AE-ckpt checkpoints/PatchVolume_8x_s2.ckpt --model-ckpt checkpoints/BiFlowNet_0453500.pt --output-dir input/your/save/dir
 ```
+Generation using 4x downsampling
+```
+python evaluation/class_conditional_generation_4x.py --AE-ckpt checkpoints/PatchVolume_4x_s2.ckpt --model-ckpt checkpoints/BiFlowNet_4x.pt --output-dir input/your/save/dir
+```
+
 **Note:**  Make sure your GPU has at least 40 GB of memory available to run inference at all supported resolutions.
 
 
