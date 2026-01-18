@@ -57,14 +57,18 @@ def main(args):
     model.load_state_dict(model_ckpt['ema'], strict = True)
     model = model.cuda()
     model.train()
-    AE = patchvolumeAE.load_from_checkpoint(args.AE_ckpt).cuda()
+    AE = patchvolumeAE.load_from_checkpoint(args.AE_ckpt)
     AE.eval()
+    AE = AE.to('cuda:0')
+    AE.enable_decoder_parallel(device_ids = list(range(1, torch.cuda.device_count())))
     device = torch.device("cuda")
     output_dir = args.output_dir
     os.makedirs(output_dir , exist_ok=True)
 
 
     for key, value in class_res_mapping.items():
+        if key not in [3, 4]:
+            continue
         class_idx = key
         anatomy_name = name_mapping[key]
         for idx,res in enumerate(value):
@@ -78,12 +82,10 @@ def main(args):
                 samples = diffusion.sample(
                     model, z, y = y, res=res_emb, strategy = args.sampling_strategy
                 )
+                samples = samples.to(AE.codebook.embeddings.device)
                 samples = (((samples + 1.0) / 2.0) * (AE.codebook.embeddings.max() -
                                                     AE.codebook.embeddings.min())) + AE.codebook.embeddings.min()
-                if res[0]*res[1]*res[2] <= 64*64*64:
-                    volume = AE.decode(samples, quantize=True)
-                else:
-                    volume = AE.decode_sliding(samples, quantize=True)
+                volume = AE.decode(samples, quantize=True)
                 volume_path = os.path.join(output_dir,output_name) 
 
                 volume = volume.detach().squeeze(0).cpu()
