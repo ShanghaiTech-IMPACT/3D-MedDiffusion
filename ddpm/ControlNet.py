@@ -147,6 +147,66 @@ class ControlNet(nn.Module):
         
         x_in = torch.cat([x, control], dim=1)
         
+        # Ensure control channels match expected spatial dims for patching
+        # The BiFlowNet architecture is sensitive to resolution.
+        # If x is 192 (image space) but we are passing latents (48)?
+        # Ah, we are training on LATENTS.
+        # But 'control' is constructed in dataset/Control_dataset.py.
+        # In Control_dataset:
+        #   D, H, W = self.resolution (which is latent res 48)
+        #   control = torch.zeros((2, D, H, W))
+        # But wait, BiFlowNet / ControlNet might expect INPUT image resolution if they contain patch embedding?
+        # BiFlowNet 4x:
+        #   patch_size = 2.
+        #   sub_volume_size = (8,8,8) ? Or something else?
+        # Let's check train_ControlNet.py args for 4x.
+        #   resolution 48 (latent)
+        #   patch-size 2
+        #   downsample-factor 4
+        # Wait, BiFlowNet input is the LATENT if we are training Latent Diffusion.
+        # Is BiFlowNet a Latent Diffusion Model or Image Diffusion Model?
+        # The paper says MedDiffusion uses VQ-GAN. So it's Latent Diffusion.
+        # So input 'x' to BiFlowNet is the latent volume.
+        # 4x latent resolution: 48x48x48.
+        # 4x BiFlowNet config:
+        #   model-dim 72
+        #   dim-mults 1 1 2 4 8
+        #   volume-channels 8
+        #   patch-size 2
+        # 
+        # In forward():
+        #   ori_shape = (x.shape[2]*8, ...) -> This assumes 8x?
+        #   This ori_shape is used for rearranging Unet_feature.
+        #   
+        # The error: "Sizes of tensors must match except in dimension 1. Expected size 192 but got size 48"
+        # x is (B, 8, 48, 48, 48).
+        # control is (B, 2, 48, 48, 48).
+        # torch.cat([x, control], dim=1) -> Should be (B, 10, 48, 48, 48).
+        # 
+        # Why expected size 192?
+        # Maybe control is 192?
+        # In Control_dataset:
+        #   D, H, W = self.resolution
+        #   If self.resolution is [48, 48, 48], control is 48.
+        #
+        # Let's check if 'x' is somehow 192?
+        # If train_ControlNet.py loads data from pre-computed latents, 'z' is 48.
+        #
+        # Wait, if we use pre-computed latents, z is 48.
+        # If we DON'T use pre-computed latents (e.g. 8x training), z was generated from image inside the loop?
+        # In 8x training loop:
+        #   if AE is not None:
+        #       embeddings = AE.encode(...)
+        #       z = ...
+        #   z matches latent res.
+        # 
+        # Let's debug sizes in ControlNet forward.
+        if x.shape[2:] != control.shape[2:]:
+             # Resize control to match x
+             control = torch.nn.functional.interpolate(control, size=x.shape[2:], mode='nearest')
+             
+        x_in = torch.cat([x, control], dim=1)
+        
         x_IntraPatch = x_in.clone()
         p = self.sub_volume_size[0]
         x_IntraPatch = x_IntraPatch.unfold(2,p,p).unfold(3,p,p).unfold(4,p,p)

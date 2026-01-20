@@ -127,6 +127,9 @@ def main(args):
         logger.warning("No pretrained base model provided! ControlNet will not work as expected.")
 
     # 3. Create ControlNet and ControlledBiFlowNet
+    # We only need AE to be on CPU or handled carefully if memory is tight.
+    # Actually, we don't need AE loaded if we have pre-computed latents and validation is disabled or managed carefully.
+    
     controlnet = ControlNet(base_model, control_channels=2).to(device)
     model = ControlledBiFlowNet(base_model, controlnet).to(device)
 
@@ -144,22 +147,25 @@ def main(args):
     opt = torch.optim.Adam(controlnet.parameters(), lr=1e-5)
     
     # DDP Wrapper
-    # Only wrap model? ControlledBiFlowNet contains both.
-    # Since base_model is frozen, DDP will synchronize gradients for controlnet only.
-    model = DDP(model, device_ids=[rank], find_unused_parameters=False) # find_unused because base_model is frozen
+    model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     amp = args.enable_amp
     scaler = GradScaler(enabled=amp)
     
-    if args.AE_ckpt:
+    AE = None
+    if args.AE_ckpt and args.latent_root is None:
         AE = patchvolumeAE.load_from_checkpoint(args.AE_ckpt).to(device)
         AE.eval()
-    else:
-        AE = None
+    elif args.AE_ckpt and args.latent_root is not None:
+         # Load AE only for validation on specific rank to save memory
+         if rank == 0: # Or whichever rank does validation
+             # We might load it later or keep it on CPU until needed
+             pass
+
 
     logger.info(f"ControlNet Parameters: {sum(p.numel() for p in controlnet.parameters()):,}")
 
-    dataset = Control_dataset(args.data_path, resolution=args.resolution, downsample_factor=args.downsample_factor)
+    dataset = Control_dataset(args.data_path, resolution=args.resolution, downsample_factor=args.downsample_factor, latent_root=args.latent_root)
     sampler = DistributedSampler(dataset, shuffle=True)
     loader = DataLoader(
         dataset=dataset,
@@ -231,7 +237,12 @@ def main(args):
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
                     
                     # Validation Sampling
-                    if AE is not None and device == 1:
+                    if args.AE_ckpt is not None and device == 1:
+                        # Load AE just-in-time if not loaded
+                        if AE is None:
+                             AE = patchvolumeAE.load_from_checkpoint(args.AE_ckpt).to(device)
+                             AE.eval()
+                        
                         with torch.no_grad():
                             milestone = train_steps // args.ckpt_every
                             cls_num = np.random.choice(list(range(0, args.num_classes)))
@@ -288,6 +299,7 @@ if __name__ == "__main__":
     parser.add_argument("--pretrained-base-ckpt", type=str, required=True)
     parser.add_argument("--vq-size", type=int, default=64)
     parser.add_argument("--downsample-factor", type=int, default=4)
+    parser.add_argument("--latent-root", type=str, default=None)
     args = parser.parse_args()
     main(args)
 
