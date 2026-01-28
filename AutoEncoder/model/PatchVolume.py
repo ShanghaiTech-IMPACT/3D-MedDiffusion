@@ -398,6 +398,22 @@ class patchvolumeAE(pl.LightningModule):
         
 
 
+    def enable_decoder_parallel(self, device_ids=None):
+        if device_ids is None:
+            device_ids = list(range(torch.cuda.device_count()))
+        
+        devices = []
+        for d in device_ids:
+            if isinstance(d, int):
+                devices.append(torch.device(f'cuda:{d}'))
+            elif isinstance(d, str):
+                devices.append(torch.device(d))
+            else:
+                devices.append(d)
+
+        print(f"Parallelizing decoder across devices: {devices}")
+        self.decoder.parallelize(devices)
+
     def log_volumes(self, batch, **kwargs):
         log = dict()
         x = batch['data']
@@ -535,7 +551,47 @@ class Decoder(nn.Module):
             nn.Conv3d(out_channels, image_channel, 3 , 1 ,1)
         )
 
+    def parallelize(self, devices):
+        self.gpus = devices
+        if len(self.gpus) > 1:
+            self.conv_first.to(self.gpus[0])
+            self.mid_block.to(self.gpus[0])
+            
+            self.block_gpu_map = {}
+            n_blocks = len(self.conv_blocks)
+            # Simple heuristic: distribute blocks evenly
+            per_gpu = int(math.ceil(n_blocks / len(self.gpus)))
+            
+            for i, block in enumerate(self.conv_blocks):
+                gpu_idx = min(i // per_gpu, len(self.gpus) - 1)
+                device = self.gpus[gpu_idx]
+                block.to(device)
+                self.block_gpu_map[i] = device
+                
+            self.final_block.to(self.gpus[-1])
+
     def forward(self, x):
+        if hasattr(self, 'gpus') and len(self.gpus) > 1:
+            x = x.to(self.gpus[0])
+            h = self.conv_first(x)
+            h = self.mid_block.res1(h)
+            h = self.mid_block.attn(h)
+            h = self.mid_block.res2(h)
+            
+            for i, block in enumerate(self.conv_blocks):
+                target_device = self.block_gpu_map[i]
+                if h.device != target_device:
+                    h = h.to(target_device)
+                h = block.res1(h)
+                h = block.res2(h)
+                h = block.up(h)
+            
+            final_device = self.gpus[-1]
+            if h.device != final_device:
+                h = h.to(final_device)
+            h = self.final_block(h)
+            return h
+
         h = self.conv_first(x)
         h = self.mid_block.res1(h)
         h = self.mid_block.attn(h)
