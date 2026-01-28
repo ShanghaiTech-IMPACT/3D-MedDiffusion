@@ -468,10 +468,8 @@ class BiFlowNet(nn.Module):
 
         self.init_conv = nn.Conv3d(channels, init_dim, (init_kernel_size, init_kernel_size,
                                    init_kernel_size), padding=(init_padding, init_padding, init_padding))
-        
-        # Store dim_mults for ControlNet usage
-        self.dim_mults = dim_mults
 
+    
         dims = [init_dim, *map(lambda m: dim * m, dim_mults)]
         in_out = list(zip(dims[:-1], dims[1:]))
         self.feature_fusion = np.asarray([item[0]==item[1] for item in in_out ]).sum()
@@ -654,7 +652,6 @@ class BiFlowNet(nn.Module):
         time,
         y=None,
         res=None,
-        control_states=None,
     ):
         assert (y is not None) == (
             self.cond_classes is not None
@@ -709,10 +706,7 @@ class BiFlowNet(nn.Module):
             x_IntraPatch = Block(x_IntraPatch,t_DiT)
 
         for Block, MlpLayer in self.IntraPatchFlow_output:
-            skip = h_DiT.pop()
-            if control_states is not None and 'h_DiT' in control_states:
-                skip = skip + control_states['h_DiT'].pop()
-            x_IntraPatch = Block(x_IntraPatch,t_DiT , skip)
+            x_IntraPatch = Block(x_IntraPatch,t_DiT , h_DiT.pop())
             Unet_feature = self.unpatchify_voxels(MlpLayer(x_IntraPatch,t_DiT))
             Unet_feature = rearrange(Unet_feature, '(b p) c d h w -> b p c d h w', b=b) 
             Unet_feature = rearrange(Unet_feature, 'b (p1 p2 p3) c d h w -> b c (p1 d) (p2 h) (p3 w)',
@@ -735,26 +729,13 @@ class BiFlowNet(nn.Module):
         x = self.mid_spatial_attn(x)
         x = self.mid_block2(x, t)
 
-        if control_states is not None and 'mid' in control_states:
-             x = x + control_states['mid']
-
         for idx, (block1, spatial_attn1,block2, spatial_attn2,  upsample) in enumerate(self.ups):
             if len(self.ups)-idx <= 2:
                 x = x + h_Unet.pop(0)
-            
-            skip = h.pop()
-            if control_states is not None and 'h' in control_states:
-                skip = skip + control_states['h'].pop()
-            x = torch.cat((x, skip), dim=1)
-
+            x = torch.cat((x, h.pop()), dim=1)
             x = block1(x, t)
             x = spatial_attn1(x)
-
-            skip = h.pop()
-            if control_states is not None and 'h' in control_states:
-                skip = skip + control_states['h'].pop()
-            x = torch.cat((x, skip), dim=1)
-
+            x = torch.cat((x, h.pop()), dim=1)
             x = block2(x, t)
             x = spatial_attn2(x)
             x = upsample(x)

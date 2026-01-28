@@ -56,7 +56,7 @@ def main(args):
     model.load_state_dict(model_ckpt['ema'], strict = True)
     model = model.cuda()
     model.train()
-    AE = patchvolumeAE.load_from_checkpoint(args.AE_ckpt).to('cuda:1')
+    AE = patchvolumeAE.load_from_checkpoint(args.AE_ckpt).cuda()
     AE.eval()
     device = torch.device("cuda")
     output_dir = args.output_dir
@@ -64,8 +64,6 @@ def main(args):
 
 
     for key, value in class_res_mapping.items():
-        # if key not in [3, 4]:
-        #     continue
         class_idx = key
         anatomy_name = name_mapping[key]
         for idx,res in enumerate(value):
@@ -77,16 +75,14 @@ def main(args):
                 y = torch.tensor([class_idx], device=device)
                 res_emb = torch.tensor(res,device=device)/64.0
                 samples = diffusion.sample(
-                    model, z, y = y, res=res_emb, strategy = args.sampling_strategy, 
+                    model, z, y = y, res=res_emb, strategy = args.sampling_strategy
                 )
-                samples = samples.to("cuda:1")
                 samples = (((samples + 1.0) / 2.0) * (AE.codebook.embeddings.max() -
                                                     AE.codebook.embeddings.min())) + AE.codebook.embeddings.min()
-                print(samples.shape)
-                # if res[0]*res[1]*res[2] <= 32*32*32:
-                volume = AE.decode(samples, quantize=True)
-                # else:
-                # volume = AE.decode_sliding(samples, quantize=True)
+                if res[0]*res[1]*res[2] <= 32*32*32:
+                    volume = AE.decode(samples, quantize=True)
+                else:
+                    volume = AE.decode_sliding(samples, quantize=True)
                 volume_path = os.path.join(output_dir,output_name) 
 
                 volume = volume.detach().squeeze(0).cpu()
